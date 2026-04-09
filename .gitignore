@@ -1,9 +1,4 @@
-<<<<<<< Updated upstream:.gitignore
 venv/
 __pycache__/
 *.pyc
 *.db
-=======
-# Created by venv; see https://docs.python.org/3/library/venv.html
-*
->>>>>>> Stashed changes:eleicaonet-ai/venv/.gitignore
