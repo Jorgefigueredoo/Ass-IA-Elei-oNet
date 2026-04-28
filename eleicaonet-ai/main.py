@@ -11,6 +11,8 @@ from sqlalchemy import func
 import models
 from database import engine, SessionLocal
 
+from sqlalchemy import func, or_ 
+
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
@@ -79,9 +81,13 @@ def validar_senha(senha_digitada, senha_hash):
     return senha_convertida == senha_hash
 
 
-def autenticar_usuario(login, senha, db):
+def autenticar_usuario(identificador, senha, db):
+    # O identificador agora pode ser tanto o login quanto o CPF
     usuario = db.query(models.Usuario).filter(
-        models.Usuario.login == login
+        or_(
+            models.Usuario.login == identificador,
+            models.Usuario.cpf == identificador
+        )
     ).first()
 
     if not usuario:
