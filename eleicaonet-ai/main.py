@@ -1,9 +1,11 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
 from pydantic import BaseModel
 import requests
 import time
 import datetime
 import hashlib
+import csv
+import io
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -372,4 +374,51 @@ def consultar_sessao(
             }
             for a in atendimentos
         ]
+    }
+
+@app.post("/cadastro/lote")
+async def cadastro_lote_csv(arquivo: UploadFile = File(...), db: Session = Depends(get_db)):
+    # Só aceita arquivos .csv
+    if not arquivo.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Por favor, envie um arquivo no formato .csv")
+
+    
+    conteudo = await arquivo.read()
+    texto = conteudo.decode('utf-8')
+    leitor_csv = csv.DictReader(io.StringIO(texto))
+
+    cadastrados = 0
+    erros = []
+
+    # 3. Loop de cadastro
+    for linha in leitor_csv:
+        try:
+            
+            usuario_existe = db.query(models.Usuario).filter(
+                (models.Usuario.cpf == linha['cpf']) | (models.Usuario.login == linha['login'])
+            ).first()
+
+            if usuario_existe:
+                erros.append(f"Pulei: {linha['login']} (CPF ou Login já cadastrados)")
+                continue
+
+            
+            novo_usuario = models.Usuario(
+                nome=linha['nome'],
+                login=linha['login'],
+                senha=gerar_hash_senha(linha['senha']), # Usando a função de hash do seu amigo!
+                cpf=linha['cpf']
+            )
+            db.add(novo_usuario)
+            cadastrados += 1
+        except Exception as e:
+            erros.append(f"Erro no registro {linha.get('nome')}: {str(e)}")
+
+    db.commit()
+
+    return {
+        "status": "Sucesso",
+        "novos_eleitores": cadastrados,
+        "registros_ignorados": len(erros),
+        "detalhes": erros
     }
