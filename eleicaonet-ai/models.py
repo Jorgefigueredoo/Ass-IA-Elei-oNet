@@ -11,7 +11,7 @@ class Usuario(Base):
     nome = Column(String, nullable=False)
     login = Column(String, unique=True, nullable=False)
     senha = Column(String, nullable=False)
-    cpf = Column(String, nullable=False)
+    cpf = Column(String, unique=True, nullable=False)
 
 
 class SessaoAtendimento(Base):
