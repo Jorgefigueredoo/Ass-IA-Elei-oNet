@@ -1,3 +1,5 @@
+# main.py
+
 from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
 from pydantic import BaseModel
 import requests
@@ -12,8 +14,7 @@ from sqlalchemy import func
 
 import models
 from database import engine, SessionLocal
-
-from sqlalchemy import func, or_ 
+from auth import criar_token, obter_usuario_autenticado
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -22,6 +23,9 @@ app = FastAPI()
 TIMEOUT_SESSAO_MINUTOS = 10
 
 
+# -------------------------------------------------------------------
+# Dependência de banco
+# -------------------------------------------------------------------
 def get_db():
     db = SessionLocal()
     try:
@@ -30,24 +34,27 @@ def get_db():
         db.close()
 
 
+# -------------------------------------------------------------------
+# Schemas
+# -------------------------------------------------------------------
 class RequisicaoCadastro(BaseModel):
     nome: str
-    login: str
-    senha: str
     cpf: str
+    senha: str
 
 
 class RequisicaoLogin(BaseModel):
-    login: str
+    cpf: str
     senha: str
 
 
 class RequisicaoPergunta(BaseModel):
-    login: str
-    senha: str
     pergunta: str
 
 
+# -------------------------------------------------------------------
+# Prompt do assistente
+# -------------------------------------------------------------------
 PROMPT_SISTEMA = """
 Você é o assistente virtual oficial de atendimento do EleiçãoNet.
 
@@ -61,7 +68,7 @@ Se houver erro de cadastro:
 oriente procurar a Comissão Eleitoral.
 
 Fluxos:
-- Login com usuário e senha
+- Login com CPF e senha
 - Recuperação de senha
 - Votação
 - Confirmação
@@ -69,44 +76,20 @@ Fluxos:
 """
 
 
-def gerar_hash_senha(senha):
-    return hashlib.sha256(
-        senha.encode()
-    ).hexdigest()
+# -------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------
+def gerar_hash_senha(senha: str) -> str:
+    return hashlib.sha256(senha.encode()).hexdigest()
 
 
-def validar_senha(senha_digitada, senha_hash):
-    senha_convertida = hashlib.sha256(
-        senha_digitada.encode()
-    ).hexdigest()
-
-    return senha_convertida == senha_hash
+def validar_senha(senha_digitada: str, senha_hash: str) -> bool:
+    return hashlib.sha256(senha_digitada.encode()).hexdigest() == senha_hash
 
 
-def autenticar_usuario(identificador, senha, db):
-    # O identificador agora pode ser tanto o login quanto o CPF
-    usuario = db.query(models.Usuario).filter(
-        or_(
-            models.Usuario.login == identificador,
-            models.Usuario.cpf == identificador
-        )
-    ).first()
-
-    if not usuario:
-        return None
-
-    if not validar_senha(senha, usuario.senha):
-        return None
-
-    return usuario
-
-
-def obter_ou_criar_sessao(cpf, db):
+def obter_ou_criar_sessao(cpf: str, db: Session):
     agora = datetime.datetime.utcnow()
-
-    limite = agora - datetime.timedelta(
-        minutes=TIMEOUT_SESSAO_MINUTOS
-    )
+    limite = agora - datetime.timedelta(minutes=TIMEOUT_SESSAO_MINUTOS)
 
     sessao = db.query(models.SessaoAtendimento).filter(
         models.SessaoAtendimento.cpf_eleitor == cpf,
@@ -118,9 +101,7 @@ def obter_ou_criar_sessao(cpf, db):
         sessao.ultimo_acesso = agora
         db.commit()
     else:
-        sessao = models.SessaoAtendimento(
-            cpf_eleitor=cpf
-        )
+        sessao = models.SessaoAtendimento(cpf_eleitor=cpf)
         db.add(sessao)
         db.commit()
         db.refresh(sessao)
@@ -128,13 +109,12 @@ def obter_ou_criar_sessao(cpf, db):
     return sessao
 
 
+# -------------------------------------------------------------------
+# Rotas públicas
+# -------------------------------------------------------------------
 @app.get("/status")
 def status_api():
-    return {
-        "api": "online",
-        "banco": "online",
-        "ia": "online"
-    }
+    return {"api": "online", "banco": "online", "ia": "online"}
 
 
 @app.post("/cadastro")
@@ -143,25 +123,22 @@ def cadastrar_usuario(
     db: Session = Depends(get_db)
 ):
     existe = db.query(models.Usuario).filter(
-        models.Usuario.login == requisicao.login
+        models.Usuario.cpf == requisicao.cpf
     ).first()
 
     if existe:
-        return {"erro": "Login já existe."}
+        raise HTTPException(status_code=400, detail="CPF já cadastrado.")
 
     usuario = models.Usuario(
         nome=requisicao.nome,
-        login=requisicao.login,
+        login=requisicao.cpf,   # login passa a ser o próprio CPF
         senha=gerar_hash_senha(requisicao.senha),
         cpf=requisicao.cpf
     )
-
     db.add(usuario)
     db.commit()
 
-    return {
-        "mensagem": "Usuário cadastrado com sucesso."
-    }
+    return {"mensagem": "Usuário cadastrado com sucesso."}
 
 
 @app.post("/login")
@@ -169,72 +146,60 @@ def login(
     requisicao: RequisicaoLogin,
     db: Session = Depends(get_db)
 ):
-    usuario = autenticar_usuario(
-        requisicao.login,
-        requisicao.senha,
-        db
-    )
+    """
+    Autentica com CPF + senha e retorna um Bearer token JWT.
+    """
+    usuario = db.query(models.Usuario).filter(
+        models.Usuario.cpf == requisicao.cpf
+    ).first()
 
-    if not usuario:
-        return {
-            "erro": "Login ou senha inválidos."
-        }
+    if not usuario or not validar_senha(requisicao.senha, usuario.senha):
+        raise HTTPException(
+            status_code=401,
+            detail="CPF ou senha inválidos.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # O campo 'sub' do token carrega o CPF
+    token = criar_token({"sub": usuario.cpf})
 
     return {
-        "mensagem": "Login realizado com sucesso.",
+        "access_token": token,
+        "token_type": "bearer",
         "usuario": usuario.nome
     }
 
 
+# -------------------------------------------------------------------
+# Rotas protegidas (exigem Bearer token)
+# -------------------------------------------------------------------
 @app.post("/perguntar")
 async def processar_pergunta(
     requisicao: RequisicaoPergunta,
+    usuario: models.Usuario = Depends(obter_usuario_autenticado),
     db: Session = Depends(get_db)
 ):
-    usuario = autenticar_usuario(
-        requisicao.login,
-        requisicao.senha,
-        db
-    )
-
-    if not usuario:
-        return {
-            "erro": "Login ou senha inválidos."
-        }
-
-    sessao = obter_ou_criar_sessao(
-        usuario.cpf,
-        db
-    )
+    sessao = obter_ou_criar_sessao(usuario.cpf, db)
 
     payload = {
         "model": "llama3",
         "prompt": f"{PROMPT_SISTEMA}\n\nEleitor: {requisicao.pergunta}\nAssistente:",
         "stream": False,
-        "options": {
-            "temperature": 0.1
-        }
+        "options": {"temperature": 0.1}
     }
 
     try:
         inicio = time.time()
-
         response = requests.post(
             "http://localhost:11434/api/generate",
-            json=payload
+            json=payload,
+            timeout=120
         )
+        response.raise_for_status()
+        tempo_ms = round((time.time() - inicio) * 1000, 2)
 
-        tempo_ms = round(
-            (time.time() - inicio) * 1000,
-            2
-        )
-
-        resposta_ia = response.json().get("response")
-
-        encaminhou = (
-            "comissão eleitoral"
-            in resposta_ia.lower()
-        )
+        resposta_ia = response.json().get("response", "")
+        encaminhou = "comissão eleitoral" in resposta_ia.lower()
 
         auditoria = models.AuditoriaAtendimento(
             sessao_id=sessao.id,
@@ -244,7 +209,6 @@ async def processar_pergunta(
             tema_recorrente="A classificar",
             tempo_resposta_ms=tempo_ms
         )
-
         db.add(auditoria)
         db.commit()
 
@@ -254,14 +218,26 @@ async def processar_pergunta(
             "tempo_resposta_ms": tempo_ms
         }
 
-    except:
-        return {
-            "erro": "Verifique se o Ollama está ativo."
-        }
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível conectar ao Ollama. Verifique se está em execução."
+        )
+    except requests.exceptions.Timeout:
+        raise HTTPException(
+            status_code=504,
+            detail="O modelo de IA demorou demais para responder."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro interno: {str(e)}"
+        )
 
 
 @app.get("/relatorio/tempo")
 def relatorio_tempo(
+    _: models.Usuario = Depends(obter_usuario_autenticado),
     db: Session = Depends(get_db)
 ):
     resultado = db.query(
@@ -272,9 +248,7 @@ def relatorio_tempo(
     ).first()
 
     if resultado[0] == 0:
-        return {
-            "mensagem": "Nenhum atendimento registrado."
-        }
+        return {"mensagem": "Nenhum atendimento registrado."}
 
     return {
         "total_atendimentos": resultado[0],
@@ -286,73 +260,54 @@ def relatorio_tempo(
 
 @app.get("/relatorio/perguntas")
 def relatorio_perguntas(
+    _: models.Usuario = Depends(obter_usuario_autenticado),
     db: Session = Depends(get_db)
 ):
     perguntas = db.query(
         models.AuditoriaAtendimento.pergunta_eleitor,
-        func.count(
-            models.AuditoriaAtendimento.id
-        ).label("total")
+        func.count(models.AuditoriaAtendimento.id).label("total")
     ).group_by(
         models.AuditoriaAtendimento.pergunta_eleitor
     ).order_by(
-        func.count(
-            models.AuditoriaAtendimento.id
-        ).desc()
+        func.count(models.AuditoriaAtendimento.id).desc()
     ).all()
 
-    return [
-        {
-            "pergunta": item[0],
-            "total": item[1]
-        }
-        for item in perguntas
-    ]
+    return [{"pergunta": item[0], "total": item[1]} for item in perguntas]
 
 
 @app.post("/sessao/encerrar/{sessao_id}")
 def encerrar_sessao(
     sessao_id: int,
+    _: models.Usuario = Depends(obter_usuario_autenticado),
     db: Session = Depends(get_db)
 ):
-    sessao = db.query(
-        models.SessaoAtendimento
-    ).filter(
+    sessao = db.query(models.SessaoAtendimento).filter(
         models.SessaoAtendimento.id == sessao_id
     ).first()
 
     if not sessao:
-        return {
-            "erro": "Sessão não encontrada."
-        }
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
 
     sessao.encerrada = True
     db.commit()
 
-    return {
-        "mensagem": "Sessão encerrada com sucesso."
-    }
+    return {"mensagem": "Sessão encerrada com sucesso."}
 
 
 @app.get("/sessao/{sessao_id}")
 def consultar_sessao(
     sessao_id: int,
+    _: models.Usuario = Depends(obter_usuario_autenticado),
     db: Session = Depends(get_db)
 ):
-    sessao = db.query(
-        models.SessaoAtendimento
-    ).filter(
+    sessao = db.query(models.SessaoAtendimento).filter(
         models.SessaoAtendimento.id == sessao_id
     ).first()
 
     if not sessao:
-        return {
-            "erro": "Sessão não encontrada."
-        }
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
 
-    atendimentos = db.query(
-        models.AuditoriaAtendimento
-    ).filter(
+    atendimentos = db.query(models.AuditoriaAtendimento).filter(
         models.AuditoriaAtendimento.sessao_id == sessao_id
     ).all()
 
@@ -376,41 +331,45 @@ def consultar_sessao(
         ]
     }
 
-@app.post("/cadastro/lote")
-async def cadastro_lote_csv(arquivo: UploadFile = File(...), db: Session = Depends(get_db)):
-    # Só aceita arquivos .csv
-    if not arquivo.filename.endswith('.csv'):
-        raise HTTPException(status_code=400, detail="Por favor, envie um arquivo no formato .csv")
 
-    
+@app.post("/cadastro/lote")
+async def cadastro_lote_csv(
+    arquivo: UploadFile = File(...),
+    _: models.Usuario = Depends(obter_usuario_autenticado),
+    db: Session = Depends(get_db)
+):
+    if not arquivo.filename.endswith(".csv"):
+        raise HTTPException(
+            status_code=400,
+            detail="Por favor, envie um arquivo no formato .csv"
+        )
+
     conteudo = await arquivo.read()
-    texto = conteudo.decode('utf-8')
+    texto = conteudo.decode("utf-8")
     leitor_csv = csv.DictReader(io.StringIO(texto))
 
     cadastrados = 0
     erros = []
 
-    # 3. Loop de cadastro
     for linha in leitor_csv:
         try:
-            
             usuario_existe = db.query(models.Usuario).filter(
-                (models.Usuario.cpf == linha['cpf']) | (models.Usuario.login == linha['login'])
+                models.Usuario.cpf == linha["cpf"]
             ).first()
 
             if usuario_existe:
-                erros.append(f"Pulei: {linha['login']} (CPF ou Login já cadastrados)")
+                erros.append(f"Pulei: CPF {linha['cpf']} já cadastrado.")
                 continue
 
-            
             novo_usuario = models.Usuario(
-                nome=linha['nome'],
-                login=linha['login'],
-                senha=gerar_hash_senha(linha['senha']), # Usando a função de hash do seu amigo!
-                cpf=linha['cpf']
+                nome=linha["nome"],
+                login=linha["cpf"],   # login = CPF
+                senha=gerar_hash_senha(linha["senha"]),
+                cpf=linha["cpf"]
             )
             db.add(novo_usuario)
             cadastrados += 1
+
         except Exception as e:
             erros.append(f"Erro no registro {linha.get('nome')}: {str(e)}")
 
