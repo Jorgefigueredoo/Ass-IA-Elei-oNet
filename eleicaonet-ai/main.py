@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
 import time
@@ -18,7 +19,13 @@ from sqlalchemy import func, or_
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 TIMEOUT_SESSAO_MINUTOS = 10
 
 
@@ -127,6 +134,23 @@ def obter_ou_criar_sessao(cpf, db):
 
     return sessao
 
+@app.get("/popular-chapas")
+def popular_chapas(db: Session = Depends(get_db)):
+    # Evitar duplicação se já tiverem sido criadas
+    if db.query(models.Chapa).first():
+        return {"mensagem": "As chapas já existem na base de dados!"}
+
+    chapas_iniciais = [
+        models.Chapa(numero="C1", nome="CHAPA 1 - INOVAÇÃO E GESTÃO"),
+        models.Chapa(numero="C2", nome="CHAPA 2 - UNIÃO E TRANSPARÊNCIA"),
+        models.Chapa(numero="C3", nome="CHAPA 3 - MOVIMENTO RENOVA"),
+        models.Chapa(numero="C4", nome="CHAPA 4 - ÉTICA E EXPERIÊNCIA")
+    ]
+    
+    db.add_all(chapas_iniciais)
+    db.commit()
+    
+    return {"mensagem": "Sucesso! Cédula inicializada com as 4 chapas."}
 
 @app.get("/status")
 def status_api():
@@ -421,4 +445,46 @@ async def cadastro_lote_csv(arquivo: UploadFile = File(...), db: Session = Depen
         "novos_eleitores": cadastrados,
         "registros_ignorados": len(erros),
         "detalhes": erros
+
+        
+    }
+# ...existing code...
+
+    db.commit()
+
+    return {
+        "status": "Sucesso",
+        "novos_eleitores": cadastrados,
+        "registros_ignorados": len(erros),
+        "detalhes": erros
+    }
+
+# Rota para listar todas as chapas
+@app.get("/chapas")
+def listar_chapas(db: Session = Depends(get_db)):
+    return db.query(models.Chapa).all()
+
+# Rota para registrar o voto
+@app.post("/votar")
+async def registrar_voto(requisicao: dict, db: Session = Depends(get_db)):
+    # Aqui a gente recebe: { "usuario_id": 1, "chapa_id": 2, "tipo": "VALIDO" }
+    
+    # Verifica se o eleitor já votou (Segurança!)
+    ja_votou = db.query(models.Voto).filter(models.Voto.usuario_id == requisicao['usuario_id']).first()
+    if ja_votou:
+        return {"erro": "Você já registrou seu voto anteriormente!"}
+
+    novo_voto = models.Voto(
+        usuario_id=requisicao['usuario_id'],
+        chapa_id=requisicao.get('chapa_id'),
+        tipo_voto=requisicao['tipo']
+    )
+    
+    db.add(novo_voto) # Adiciona à fila
+    db.commit()      # Confirma no banco
+    db.refresh(novo_voto) # Atualiza o objeto com o ID gerado
+    
+    return {
+        "mensagem": "Voto computado com sucesso!",
+        "protocolo": f"ELO-2026-{novo_voto.id}"
     }
