@@ -190,7 +190,10 @@ def login(
     return {
         "access_token": token,
         "token_type": "bearer",
-        "usuario": usuario.nome
+        "usuario": {
+            "id": usuario.id,
+            "nome": usuario.nome
+        }
     }
 
 
@@ -406,16 +409,6 @@ async def cadastro_lote_csv(
         "detalhes": erros
 
         
-    }
-# ...existing code...
-
-    db.commit()
-
-    return {
-        "status": "Sucesso",
-        "novos_eleitores": cadastrados,
-        "registros_ignorados": len(erros),
-        "detalhes": erros
     }
 
 # Rota para listar todas as chapas
