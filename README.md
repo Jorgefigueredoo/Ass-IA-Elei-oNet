@@ -35,31 +35,29 @@ eleicaonet-ai/
 
 ---
 
-## 🚀 Como Rodar Localmente
+## 🚀 Como Rodar o Back-end (EleiçãoNet-AI)
 
-Siga os passos **na ordem indicada**.
+Siga os passos **na ordem indicada** para garantir que a integração com o Laravel funcione.
 
 ### Pré-requisitos
 
-- **Python 3.14** ou superior → [python.org](https://python.org)
-- **Ollama** instalado → [ollama.com](https://ollama.com)
+- **Python 3.10** ou superior → [python.org](https://python.org)
+- **Ollama** instalado (para a IA Lara) → [ollama.com](https://ollama.com)
 
 ---
 
-### 1. Preparar o modelo de IA
+## 🚀 Passo a Passo
 
-Com o Ollama instalado, abra um terminal e baixe o Llama 3:
+### 1. Preparar o modelo de IA (Lara)
+Com o Ollama instalado, abra um terminal e baixe o modelo Llama 3:
 
 ```powershell
 ollama run llama3
 ```
 
-> ⚠️ **Mantenha este terminal aberto.** Ele roda o servidor de processamento da IA em segundo plano.
-
----
+> ⚠️ **Mantenha este terminal aberto.** O Ollama precisa estar rodando para que o chat da Lara funcione.
 
 ### 2. Configurar o ambiente Python
-
 Abra um **segundo terminal** dentro da pasta do projeto e execute:
 
 ```powershell
@@ -72,19 +70,35 @@ python -m venv venv
 # Ative o ambiente virtual (Windows)
 .\venv\Scripts\activate
 
-# Instale as dependências do projeto
-pip install -r requirements.txt
+# Instale as dependências necessárias
+pip install fastapi uvicorn sqlalchemy ollama
 ```
+
+### 3. Iniciar a API (Porta 8001)
+É fundamental rodar na porta **8001**, pois o front-end está configurado para este endereço. Com o ambiente virtual ativo, execute:
+
+```powershell
+python -m uvicorn main:app --reload --port 8001
+```
+
+> O banco de dados local `eleicaonet.db` será criado automaticamente na primeira execução.
+
+### 4. Inicializar a Urna (Passo Obrigatório) 🗳️
+Para que as chapas apareçam na tela de votação, você deve popular o banco de dados. Com o servidor ligado, acesse pelo navegador:
+👉 **`http://127.0.0.1:8001/popular-chapas`**
+
+Se aparecer a mensagem *"Sucesso! Cédula inicializada"*, a integração está pronta para uso.
 
 ---
 
-### 3. Iniciar a API
+## 🛠️ Documentação das Rotas
+Acesse a interface Swagger para testar as funções manualmente:
+🔗 **`http://127.0.0.1:8001/docs`**
 
-Com o ambiente virtual ativo, suba o servidor:
-
-```powershell
-uvicorn main:app --reload
-```
+* **POST /cadastro**: Cadastro de novos eleitores.
+* **POST /login**: Autenticação de usuários.
+* **GET /chapas**: Listagem de chapas para a votação.
+* **POST /votar**: Registro de votos no banco de dados.
 
 > **Nota:** Ao iniciar o servidor pela primeira vez, o arquivo `eleicaonet.db` será criado automaticamente na raiz do projeto com todas as tabelas necessárias.
 
