@@ -3,7 +3,6 @@ from sqlalchemy.orm import relationship
 from database import Base
 import datetime
 
-
 class Usuario(Base):
     __tablename__ = "usuarios"
 
@@ -13,6 +12,31 @@ class Usuario(Base):
     senha = Column(String, nullable=False)
     cpf = Column(String, unique=True, nullable=False)
 
+    # Relação: Um utilizador pode ter um voto
+    voto = relationship("Voto", back_populates="eleitor", uselist=False)
+
+class Chapa(Base):
+    __tablename__ = "chapas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    numero = Column(String, unique=True, nullable=False) # Ex: "C1"
+    nome = Column(String, nullable=False) # Ex: "INOVAÇÃO E GESTÃO"
+
+    # Relação: Uma chapa pode receber vários votos
+    votos_recebidos = relationship("Voto", back_populates="chapa")
+
+class Voto(Base):
+    __tablename__ = "votos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    chapa_id = Column(Integer, ForeignKey("chapas.id"), nullable=True) # Nulo se for Branco/Nulo
+    tipo_voto = Column(String, nullable=False) # "VALIDO", "BRANCO", "NULO"
+    data_voto = Column(DateTime, default=datetime.datetime.utcnow)
+
+    # Relações
+    eleitor = relationship("Usuario", back_populates="voto")
+    chapa = relationship("Chapa", back_populates="votos_recebidos")
 
 class SessaoAtendimento(Base):
     __tablename__ = "sessoes_atendimento"
@@ -27,7 +51,6 @@ class SessaoAtendimento(Base):
         "AuditoriaAtendimento",
         back_populates="sessao"
     )
-
 
 class AuditoriaAtendimento(Base):
     __tablename__ = "auditoria_atendimentos"
