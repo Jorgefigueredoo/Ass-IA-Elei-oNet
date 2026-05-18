@@ -12,9 +12,8 @@ class Usuario(Base):
     senha = Column(String, nullable=False)
     cpf = Column(String, unique=True, nullable=False)
 
-    # Relação: Um utilizador pode ter um voto
-    voto = relationship("Voto", back_populates="eleitor", uselist=False)
-
+    # Relação: Um utilizador pode ter VÁRIOS votos (um para cada pleito)
+    votos = relationship("Voto", back_populates="eleitor")
 class Chapa(Base):
     __tablename__ = "chapas"
 
@@ -31,11 +30,12 @@ class Voto(Base):
     id = Column(Integer, primary_key=True, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     chapa_id = Column(Integer, ForeignKey("chapas.id"), nullable=True) # Nulo se for Branco/Nulo
+    pleito_id = Column(Integer, nullable=False) # NOVA COLUNA: Indica se é Prefeito, Vereador, etc.
     tipo_voto = Column(String, nullable=False) # "VALIDO", "BRANCO", "NULO"
     data_voto = Column(DateTime, default=datetime.datetime.utcnow)
 
     # Relações
-    eleitor = relationship("Usuario", back_populates="voto")
+    eleitor = relationship("Usuario", back_populates="votos") # Ajustado para 'votos'
     chapa = relationship("Chapa", back_populates="votos_recebidos")
 
 class SessaoAtendimento(Base):
