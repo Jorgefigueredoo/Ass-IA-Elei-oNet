@@ -44,6 +44,15 @@ def get_db():
 # -------------------------------------------------------------------
 # Schemas
 # -------------------------------------------------------------------
+class VotoIndividual(BaseModel):
+    chapa_id: int | None = None
+    pleito_id: int
+    tipo: str
+
+class RequisicaoVotarLote(BaseModel):
+    usuario_id: int
+    votos: list[VotoIndividual]
+
 class RequisicaoCadastro(BaseModel):
     nome: str
     cpf: str
@@ -122,16 +131,28 @@ def popular_chapas(db: Session = Depends(get_db)):
         return {"mensagem": "As chapas já existem na base de dados!"}
 
     chapas_iniciais = [
+        # Pleito 1: Diretoria (Vão ganhar os IDs 1, 2, 3 e 4)
         models.Chapa(numero="C1", nome="CHAPA 1 - INOVAÇÃO E GESTÃO"),
         models.Chapa(numero="C2", nome="CHAPA 2 - UNIÃO E TRANSPARÊNCIA"),
         models.Chapa(numero="C3", nome="CHAPA 3 - MOVIMENTO RENOVA"),
-        models.Chapa(numero="C4", nome="CHAPA 4 - ÉTICA E EXPERIÊNCIA")
+        models.Chapa(numero="C4", nome="CHAPA 4 - ÉTICA E EXPERIÊNCIA"),
+        
+        # Pleito 2: Conselho (Vão ganhar os IDs 5, 6 e 7)
+        models.Chapa(numero="CA", nome="CHAPA A - FOCO E RESULTADO"),
+        models.Chapa(numero="CB", nome="CHAPA B - AÇÃO CONJUNTA"),
+        models.Chapa(numero="CC", nome="CHAPA C - INOVAÇÃO CONSTANTE"),
+        
+        # Pleito 3: Regional (Vão ganhar os IDs 8, 9, 10 e 11)
+        models.Chapa(numero="J", nome="CANDIDATO JOÃO DA SILVA"),
+        models.Chapa(numero="M", nome="CANDIDATA MARIA SOUZA"),
+        models.Chapa(numero="P", nome="CANDIDATO PEDRO ALVES"),
+        models.Chapa(numero="A", nome="CANDIDATA ANA COSTA")
     ]
     
     db.add_all(chapas_iniciais)
     db.commit()
     
-    return {"mensagem": "Sucesso! Cédula inicializada com as 4 chapas."}
+    return {"mensagem": "Sucesso! Banco inicializado com todas as chapas e candidatos."}
 
 # -------------------------------------------------------------------
 # Rotas públicas
@@ -416,27 +437,42 @@ async def cadastro_lote_csv(
 def listar_chapas(db: Session = Depends(get_db)):
     return db.query(models.Chapa).all()
 
-# Rota para registrar o voto
+# Rota para registrar votos em lote
 @app.post("/votar")
-async def registrar_voto(requisicao: dict, db: Session = Depends(get_db)):
-    # Aqui a gente recebe: { "usuario_id": 1, "chapa_id": 2, "tipo": "VALIDO" }
-    
-    # Verifica se o eleitor já votou (Segurança!)
-    ja_votou = db.query(models.Voto).filter(models.Voto.usuario_id == requisicao['usuario_id']).first()
-    if ja_votou:
-        return {"erro": "Você já registrou seu voto anteriormente!"}
+async def registrar_votos_lote(requisicao: RequisicaoVotarLote, db: Session = Depends(get_db)):
+    # Inicia o processamento da lista de votos
+    try:
+        for voto_req in requisicao.votos:
+            # Verifica se o eleitor já votou NESTE pleito específico
+            ja_votou = db.query(models.Voto).filter(
+                models.Voto.usuario_id == requisicao.usuario_id,
+                models.Voto.pleito_id == voto_req.pleito_id
+            ).first()
+            
+            if ja_votou:
+                # Se achar voto duplicado, CANCELA TUDO que foi feito no loop
+                db.rollback() 
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Você já registrou seu voto para o pleito {voto_req.pleito_id}!"
+                )
 
-    novo_voto = models.Voto(
-        usuario_id=requisicao['usuario_id'],
-        chapa_id=requisicao.get('chapa_id'),
-        tipo_voto=requisicao['tipo']
-    )
-    
-    db.add(novo_voto) # Adiciona à fila
-    db.commit()      # Confirma no banco
-    db.refresh(novo_voto) # Atualiza o objeto com o ID gerado
-    
-    return {
-        "mensagem": "Voto computado com sucesso!",
-        "protocolo": f"ELO-2026-{novo_voto.id}"
-    }
+            novo_voto = models.Voto(
+                usuario_id=requisicao.usuario_id,
+                chapa_id=voto_req.chapa_id,
+                tipo_voto=voto_req.tipo,
+                pleito_id=voto_req.pleito_id
+            )
+            db.add(novo_voto) # Adiciona à fila da transação
+        
+        # Se o loop terminar sem erros, confirma TUDO de uma vez no banco
+        db.commit()      
+        
+        return {
+            "status": "Sucesso",
+            "mensagem": f"{len(requisicao.votos)} votos computados com sucesso!"
+        }
+        
+    except Exception as e:
+        db.rollback() # Garante que nada será salvo em caso de erro interno
+        raise HTTPException(status_code=500, detail=str(e))
