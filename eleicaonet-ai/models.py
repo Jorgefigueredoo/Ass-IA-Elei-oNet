@@ -5,6 +5,15 @@ import datetime
 
 
 
+
+class LogAtividade(Base):
+    __tablename__ = "logs_auditoria"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tipo = Column(String, default="settings") 
+    titulo = Column(String, nullable=False)
+    data_hora = Column(DateTime, default=datetime.datetime.utcnow)
+
 class ControleVoto(Base):
     __tablename__ = "controle_votos"
     id = Column(Integer, primary_key=True, index=True)
