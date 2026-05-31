@@ -598,3 +598,19 @@ def gerar_zeresima(db: Session = Depends(get_db)):
     db.commit()
     
     return {"success": True, "message": "Zerésima verificada e gerada com sucesso."}
+
+@app.get("/admin/relatorios/dados")
+def obter_dados_relatorio(db: Session = Depends(get_db)):
+    # Conta total de eleitores e total de votos
+    total_eleitores = db.query(models.Usuario).count()
+    total_votos = db.query(models.Voto).count()
+    
+    # Pega a data e hora atual do fechamento
+    agora = datetime.datetime.now()
+    
+    return {
+        "total_eleitores": total_eleitores,
+        "total_votos": total_votos,
+        "data_fechamento": agora.strftime("%d/%m/%Y"),
+        "hora_fechamento": agora.strftime("%H:%M")
+    }
