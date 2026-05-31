@@ -3,6 +3,15 @@ from sqlalchemy.orm import relationship
 from database import Base
 import datetime
 
+
+
+class ControleVoto(Base):
+    __tablename__ = "controle_votos"
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
+    pleito_id = Column(Integer)
+    
+    
 class Usuario(Base):
     __tablename__ = "usuarios"
 
@@ -11,9 +20,10 @@ class Usuario(Base):
     login = Column(String, unique=True, nullable=False)
     senha = Column(String, nullable=False)
     cpf = Column(String, unique=True, nullable=False)
+    ja_votou = Column(Boolean, default=False)
 
     # Relação: Um utilizador pode ter VÁRIOS votos (um para cada pleito)
-    votos = relationship("Voto", back_populates="eleitor")
+
 class Chapa(Base):
     __tablename__ = "chapas"
 
@@ -24,18 +34,19 @@ class Chapa(Base):
     # Relação: Uma chapa pode receber vários votos
     votos_recebidos = relationship("Voto", back_populates="chapa")
 
+
+
 class Voto(Base):
     __tablename__ = "votos"
 
     id = Column(Integer, primary_key=True, index=True)
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     chapa_id = Column(Integer, ForeignKey("chapas.id"), nullable=True) # Nulo se for Branco/Nulo
     pleito_id = Column(Integer, nullable=False) # NOVA COLUNA: Indica se é Prefeito, Vereador, etc.
     tipo_voto = Column(String, nullable=False) # "VALIDO", "BRANCO", "NULO"
     data_voto = Column(DateTime, default=datetime.datetime.utcnow)
 
     # Relações
-    eleitor = relationship("Usuario", back_populates="votos") # Ajustado para 'votos'
+    #eleitor = relationship("Usuario", back_populates="votos") # Ajustado para 'votos'
     chapa = relationship("Chapa", back_populates="votos_recebidos")
 
 class SessaoAtendimento(Base):
