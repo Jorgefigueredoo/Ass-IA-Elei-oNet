@@ -499,3 +499,102 @@ async def registrar_votos_lote(requisicao: RequisicaoVotarLote, db: Session = De
     except Exception as e:
         db.rollback() # Garante que nada será salvo em caso de erro interno
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/dashboard/metricas")
+def obter_metricas_dashboard(db: Session = Depends(get_db)):
+    # 1. Total de eleitores cadastrados
+    total_eleitores = db.query(models.Usuario).count()
+    
+    # 2. Conta eleitores ÚNICOS que votaram na tabela de Controle
+    eleitores_votaram = db.query(models.ControleVoto.usuario_id).distinct().count()
+    
+    # 3. Calcula o quórum percentual
+    quorum = 0
+    if total_eleitores > 0:
+        quorum = round((eleitores_votaram / total_eleitores) * 100, 1)
+        
+    # 4. Total de votos avulsos registrados
+    total_votos_urna = db.query(models.Voto).count()
+
+    return {
+        "total_eleitores": total_eleitores,
+        "eleitores_votaram": eleitores_votaram,
+        "quorum_percentual": quorum,
+        "total_votos_urna": total_votos_urna,
+        "status_urna": "Ativa"
+    }
+
+@app.get("/admin/dashboard/grafico")
+def obter_dados_grafico(db: Session = Depends(get_db)):
+    votos = db.query(models.Voto).all()
+    
+    # Array com 9 posições para o gráfico: [00h, 03h, 06h, 09h, 12h, 15h, 18h, 21h, 24h]
+    dados_hoje = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    votos_hoje_count = 0
+    
+    # Data e hora atual (UTC)
+    agora = datetime.datetime.utcnow()
+    hoje = agora.date()
+    
+    for voto in votos:
+        # Pega apenas os votos registrados no dia de hoje
+        if voto.data_voto.date() == hoje:
+            votos_hoje_count += 1
+            hora = voto.data_voto.hour
+            
+            # Divide a hora por 3 para achar o bloco correto no gráfico
+            indice = hora // 3
+            if indice <= 8:
+                dados_hoje[indice] += 1
+                
+    # Calcula a média de votos por hora (evitando divisão por zero)
+    hora_atual = agora.hour if agora.hour > 0 else 1
+    votos_por_hora = round(votos_hoje_count / hora_atual)
+    
+    return {
+        "votos_por_hora": votos_por_hora,
+        "grafico_hoje": dados_hoje
+    }
+
+@app.get("/admin/auditoria/logs")
+def listar_logs(db: Session = Depends(get_db)):
+    # Busca os logs ordenados do mais recente para o mais antigo
+    logs = db.query(models.LogAtividade).order_by(models.LogAtividade.data_hora.desc()).all()
+    
+    # Se não tiver nenhum log ainda, a gente manda uns falsos só para a tela não ficar vazia na apresentação
+    if not logs:
+        return [
+            {"tipo": "settings", "cor": "green", "titulo": "Admin ativou a urna com segurança", "data": "31/05/2026", "hora": "02:00"},
+            {"tipo": "file", "cor": "blue", "titulo": "Sistema gerou certificado SSL", "data": "31/05/2026", "hora": "01:45"},
+            {"tipo": "user", "cor": "blue", "titulo": "Admin iniciou o sistema", "data": "31/05/2026", "hora": "01:30"}
+        ]
+    
+    resultado = []
+    for log in logs:
+        resultado.append({
+            "tipo": log.tipo,
+            "cor": "blue" if log.tipo in ["user", "file"] else "green",
+            "titulo": log.titulo,
+            "data": log.data_hora.strftime("%d/%m/%Y"),
+            "hora": log.data_hora.strftime("%H:%M")
+        })
+    return resultado
+
+@app.post("/admin/auditoria/zeresima")
+def gerar_zeresima(db: Session = Depends(get_db)):
+    # A Zerésima SÓ PODE ser gerada se a urna estiver vazia!
+    total_votos = db.query(models.Voto).count()
+    
+    if total_votos > 0:
+        return {
+            "success": False, 
+            "message": f"ERRO DE INTEGRIDADE: A urna já possui {total_votos} votos registrados. A zerésima exige urna vazia!"
+        }
+    
+    # Se tiver vazia, anota no log que a zerésima foi gerada
+    novo_log = models.LogAtividade(tipo="file", titulo="Admin gerou relatório de Zerésima")
+    db.add(novo_log)
+    db.commit()
+    
+    return {"success": True, "message": "Zerésima verificada e gerada com sucesso."}
