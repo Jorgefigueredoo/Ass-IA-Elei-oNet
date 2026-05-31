@@ -437,16 +437,17 @@ async def cadastro_lote_csv(
 def listar_chapas(db: Session = Depends(get_db)):
     return db.query(models.Chapa).all()
 
-# Rota para registrar votos em lote
+# Rota para registrar votos em lote (Agora 100% Anônimo)
 @app.post("/votar")
 async def registrar_votos_lote(requisicao: RequisicaoVotarLote, db: Session = Depends(get_db)):
     # Inicia o processamento da lista de votos
     try:
         for voto_req in requisicao.votos:
-            # Verifica se o eleitor já votou NESTE pleito específico
-            ja_votou = db.query(models.Voto).filter(
-                models.Voto.usuario_id == requisicao.usuario_id,
-                models.Voto.pleito_id == voto_req.pleito_id
+            
+            # 1. Verifica na TABELA DE CONTROLE se o eleitor já votou NESTE pleito
+            ja_votou = db.query(models.ControleVoto).filter(
+                models.ControleVoto.usuario_id == requisicao.usuario_id,
+                models.ControleVoto.pleito_id == voto_req.pleito_id
             ).first()
             
             if ja_votou:
@@ -457,10 +458,17 @@ async def registrar_votos_lote(requisicao: RequisicaoVotarLote, db: Session = De
                     detail=f"Você já registrou seu voto para o pleito {voto_req.pleito_id}!"
                 )
 
-            novo_voto = models.Voto(
+            # 2. Adiciona o eleitor na TABELA DE CONTROLE (Registro de comparecimento)
+            registro_controle = models.ControleVoto(
                 usuario_id=requisicao.usuario_id,
+                pleito_id=voto_req.pleito_id
+            )
+            db.add(registro_controle) # Adiciona à fila da transação
+
+            # 3. Adiciona o voto na URNA ANÔNIMA (Perceba que não passamos o usuario_id aqui!)
+            novo_voto = models.Voto(
                 chapa_id=voto_req.chapa_id,
-                tipo_voto=voto_req.tipo,
+                tipo_voto=voto_req.tipo, # Ex: "VALIDO", "BRANCO", "NULO"
                 pleito_id=voto_req.pleito_id
             )
             db.add(novo_voto) # Adiciona à fila da transação
@@ -470,9 +478,12 @@ async def registrar_votos_lote(requisicao: RequisicaoVotarLote, db: Session = De
         
         return {
             "status": "Sucesso",
-            "mensagem": f"{len(requisicao.votos)} votos computados com sucesso!"
+            "mensagem": f"{len(requisicao.votos)} votos computados com sucesso e sigilo garantido!"
         }
         
+    except HTTPException:
+        # Repassa o erro 400 da duplicidade sem cair no bloco genérico 500
+        raise 
     except Exception as e:
         db.rollback() # Garante que nada será salvo em caso de erro interno
         raise HTTPException(status_code=500, detail=str(e))
