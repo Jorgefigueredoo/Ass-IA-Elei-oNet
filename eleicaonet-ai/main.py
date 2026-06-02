@@ -395,7 +395,7 @@ def consultar_sessao(
 @app.post("/cadastro/lote")
 async def cadastro_lote_csv(
     arquivo: UploadFile = File(...),
-    _: models.Usuario = Depends(obter_usuario_autenticado),
+   # _: models.Usuario = Depends(obter_usuario_autenticado),
     db: Session = Depends(get_db)
 ):
     if not arquivo.filename.endswith(".csv"):
