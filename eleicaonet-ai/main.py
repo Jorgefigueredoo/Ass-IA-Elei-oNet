@@ -600,19 +600,19 @@ def gerar_zeresima(db: Session = Depends(get_db)):
     return {"success": True, "message": "Zerésima verificada e gerada com sucesso."}
 
 class RequisicaoLoginAdmin(BaseModel):
-    cpf: str
+    email: str
     senha: str
 
 @app.post("/admin/login")
 def login_admin(requisicao: RequisicaoLoginAdmin):
-    # Dados de acesso chumbados para o admin
-    if requisicao.cpf == "admin" and requisicao.senha == "admin123":
+    # Dados de acesso  para o admin
+    if requisicao.email == "admin@eleicaonet.com" and requisicao.senha == "admin123":
         # Gera o token específico para o admin
         token = criar_token({"sub": "admin_sistema"})
         return {
             "access_token": token, 
             "token_type": "bearer", 
-            "usuario": {"nome": "Admin Sistema"}
+            "usuario": {"cpf": "Admin Sistema"}
         }
     
     # Se tentar logar com CPF de eleitor aqui, ele toma bloqueio
