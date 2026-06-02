@@ -633,3 +633,20 @@ def obter_dados_relatorio(db: Session = Depends(get_db)):
         "data_fechamento": agora.strftime("%d/%m/%Y"),
         "hora_fechamento": agora.strftime("%H:%M")
     }
+class RequisicaoRecuperarSenha(BaseModel):
+    cpf: str
+    nova_senha: str
+
+@app.post("/recuperar-senha")
+def recuperar_senha(requisicao: RequisicaoRecuperarSenha, db: Session = Depends(get_db)):
+    # 1. Busca o eleitor pelo CPF
+    usuario = db.query(models.Usuario).filter(models.Usuario.cpf == requisicao.cpf).first()
+    
+    if not usuario:
+        raise HTTPException(status_code=404, detail="CPF não encontrado no sistema.")
+        
+    # 2. Atualiza a senha com a criptografia correta
+    usuario.senha = gerar_hash_senha(requisicao.nova_senha)
+    db.commit()
+    
+    return {"status": "Sucesso", "mensagem": "Senha atualizada com sucesso!"}
